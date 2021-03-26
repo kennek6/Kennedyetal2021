@@ -1,0 +1,604 @@
+---
+title: "mec_analysis_30042020"
+author: "Kate"
+date: "4/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r load data}
+
+sessionInfo()
+
+set.seed(1) #Some analyses rely on random numbers - to make them reproducible you must set a seed number
+
+
+library(phyloseq)
+#library(dada2)
+library(ape)
+library(here)
+library(ggplot2)
+library(tidyverse)
+library(vegan)
+library(RColorBrewer)
+library(ggpubr)
+library(nlme)
+library(emmeans)
+library(lme4)
+
+theme_set(theme_bw())
+
+
+taxa_gg <- read.csv("data/taxa_DMSmeconium_April2020_v34_silva132.csv", row.names = 1)
+asv_table <- read.csv("data/seqtab_nochim_transposed_DMSmeconium_April2020_v34.csv", row.names=1)
+map_empty <- read.csv("data/2019-Nov4_BUGSinBerlin_map.csv")
+
+map_empty$conc_ng <- as.numeric(map_empty$conc_ng)
+map_empty$dilution <- as.factor(map_empty$dilution)
+
+meta <- read.csv("data/meconium_metadata.csv")
+
+```
+
+
+
+Define normalization function for relative abundances
+```{r define}
+normf = function(x) {
+  x/sum(x)
+}
+```
+
+
+Organize data:
+```{r organize}
+read_count <- data.frame("SampleID" = names(asv_table), "read_count" = colSums(asv_table))
+
+meta_data1 <- map_empty %>%
+  full_join(read_count, by = "SampleID")
+
+meta_data <- meta_data1 %>%
+  full_join(meta)
+
+row.names(meta_data) <- meta_data[,1]
+
+asv_table <- as.matrix(asv_table)
+taxa_gg <- as.matrix(taxa_gg)
+```
+
+import to phyloseq:
+```{r import}
+OTU <-  otu_table(asv_table, taxa_are_rows = TRUE)
+TAX <-  tax_table(taxa_gg)
+
+physeq <-  phyloseq(OTU, TAX)
+
+sampledata <-  sample_data(meta_data)
+
+ps <-  merge_phyloseq(physeq, sampledata)
+
+```
+
+
+Subset data
+```{r subset}
+ps
+ps.mec <-  subset_samples(ps, 
+                            (SampleTime %in% c("fetal", "neg")
+                            & dilution == "1"
+                            & ParticipantID != "neg_unopen_nonsterile"
+                            ))
+ps.mec <- prune_taxa(taxa_sums(ps.mec) > 1, ps.mec)
+ps.mec <- prune_samples(sample_sums(ps.mec) > 0, ps.mec )
+ps.mec
+
+library(viridis)
+getPalette = colorRampPalette(viridis::inferno(5))
+
+timeList = c("neg", "fetal", "neo", "inf", "ignore")
+timePalette = getPalette(length(timeList))
+names(timePalette) = timeList
+timePalette
+
+```
+
+
+* Clean the data
+	* remove host
+	
+Extract OTU table and sample metadata as base R data.frames
+```{r extract 30}
+#get sample sums: each sample's sequencing depth
+sample_data(ps.mec)$sample_sums <- sample_sums(ps.mec)
+map <- data.frame(sample_data(ps.mec))
+otu <- data.frame(as(otu_table(ps.mec), 'matrix'))
+taxa <- data.frame(tax_table(ps.mec))
+
+```
+
+```{r CleanData 30}
+# Remove host
+ps.mec.0 <- ps.mec
+
+host <- (taxa[,'Kingdom'] == 'Eukaryota') |
+	(is.na(taxa[,'Phylum'])) |
+	(!is.na(taxa[,'Family']) & taxa[,'Family'] == 'Mitochondria') |
+	(!(is.na(taxa[,'Order'])) & taxa[,'Order'] == 'Chloroplast')
+sum(host)
+length(host)
+
+keep <- !host
+ps.mec <- prune_taxa(keep, ps.mec)
+ps.mec
+
+ps.mec <- prune_taxa(taxa_sums(ps.mec) > 1, ps.mec)
+ps.mec <- prune_samples(sample_sums(ps.mec) > 0, ps.mec )
+ps.mec
+
+ps.mec.30 <- subset_samples(ps.mec, Cycles == "30")
+ps.mec.30 <- prune_taxa(taxa_sums(ps.mec.30)>1, ps.mec.30)
+ps.mec.30
+
+summary(sample_sums(ps.mec.30))
+
+
+```
+Subset data
+First going to look at most recent run since all samples are included. 
+```{r subset}
+ps
+ps.SF4 <-  subset_samples(ps, 
+                            ((SampleTime == "inf"|
+                               (SampleTime == "neo" & extraction == "manual"))
+                            & dilution == "1"
+                            & ParticipantID != "neg_unopen_nonsterile"
+                            )) 
+ps.SF4 <- prune_taxa(taxa_sums(ps.SF4) > 1, ps.SF4)
+which(sample_sums(ps.SF4) <1)
+ps.SF4 <- prune_samples(sample_sums(ps.SF4) > 0, ps.SF4 )
+ps.SF4
+```
+
+
+* Clean the data
+	* remove host
+	
+Extract OTU table and sample metadata as base R data.frames
+```{r extract 30}
+#get sample sums: each sample's sequencing depth
+sample_data(ps.SF4)$sample_sums <- sample_sums(ps.SF4)
+map.sf4 <- data.frame(sample_data(ps.SF4))
+otu.sf4 <- data.frame(as(otu_table(ps.SF4), 'matrix'))
+taxa.sf4 <- data.frame(tax_table(ps.SF4))
+
+summary(sample_sums(ps.SF4))
+
+```
+
+```{r CleanData 30}
+# Remove host
+ps.sf4.0 <- ps.SF4
+
+host <- (taxa.sf4[,'Kingdom'] == 'Eukaryota') |
+	(is.na(taxa.sf4[,'Phylum'])) |
+	(!is.na(taxa.sf4[,'Family']) & taxa.sf4[,'Family'] == 'Mitochondria') |
+	(!(is.na(taxa.sf4[,'Order'])) & taxa.sf4[,'Order'] == 'Chloroplast')
+sum(host)
+length(host)
+
+keep <- !host
+ps.SF4 <- prune_taxa(keep, ps.SF4)
+ps.SF4
+
+ps.SF4 <- prune_taxa(taxa_sums(ps.SF4) > 1, ps.SF4)
+ps.SF4 <- prune_samples(sample_sums(ps.SF4) > 0, ps.SF4 )
+ps.SF4
+
+ps.SF4.30 <- subset_samples(ps.SF4, Cycles == "30")
+ps.SF4.30 <- prune_taxa(taxa_sums(ps.SF4.30)>1, ps.SF4.30)
+ps.SF4.30
+ps.mec.30
+
+ps.merge <- merge_phyloseq(ps.mec.30, ps.SF4.30)
+ps.merge <- prune_samples(sample_sums(ps.merge)>0, ps.merge)
+ps.merge
+
+ps.merge.norm <- transform_sample_counts(ps.merge, normf)
+
+```
+
+Looking only at 30 cycle data, remove any ASVs that don't also show up at 40 cycles for the same sample. 
+```{r}
+participants <- c("M201", "M202", "M203", "M204", "M205", "M206", "M207", "M208","M209",
+                  "M210","M211","M212", "M213","M215","M216", "M217","M219","M221","M222", 
+                  "M223")
+
+ps.pruned <- subset_samples(ps.mec, SampleTime == "neg" & Cycles == "30" & ParticipantID != "neg_unopen_nonsterile")
+
+
+for (i in participants) {
+  ID <-  as.character(get_variable(ps.mec, "ParticipantID")) == i
+  psi <- prune_samples(ID, ps.mec)
+  Cycles <- as.character(get_variable(psi, "Cycles")) == "30"
+  ps.30 <- prune_samples(Cycles, psi)
+  ps.30 <- prune_taxa(taxa_sums(ps.30)>1, ps.30)
+  Cycles <- as.character(get_variable(psi, "Cycles")) == "40"
+  ps.40 <- prune_samples(Cycles, psi)
+  ps.40 <- prune_taxa(taxa_sums(ps.40)>1, ps.40)
+  taxa.40 <- taxa_names(ps.40)
+  ps.30 <- prune_taxa(taxa.40, ps.30)
+  ps.30
+  ps.pruned <- merge_phyloseq(ps.30, ps.pruned)
+  
+}
+
+ps.pruned
+ps.pruned <- prune_taxa(taxa_sums(ps.pruned)>1, ps.pruned)
+ps.pruned
+map.pruned <- data.frame(sample_data(ps.pruned))
+```
+
+```{r}
+ps.glommedprune <- tax_glom(ps.pruned, "Genus")
+ps.glommedprune
+
+ps.glommed <- tax_glom(ps.mec.30, "Genus")
+ps.glommed
+
+# New facet label names for dose variable
+run.labs <- c("Run 1", "Run 2")
+names(run.labs) <- c("LR324", "LR343")
+
+p <- plot_heatmap(ps.glommedprune, method="PCoA", distance = "bray", weighted = FALSE,sample.label="IlluminaRun", taxa.label = "Genus", 
+             sample.order = "ParticipantID",
+             low = "#cedfed", high = "#377EB8", na.value = "white") +
+  facet_grid(Class~ParticipantID, scales="free", space = "free",
+             labeller = labeller(IlluminaRun = run.labs))+ 
+  theme(legend.position = "bottom", axis.text.x = element_text(vjust=0.2), strip.background = element_blank(), strip.text.y = element_text(angle = 0),
+        axis.title = element_blank())
+
+EDFig2_data <- p$data %>%
+  select(ParticipantID, IlluminaRun, Genus, Abundance)
+
+EDFig2_data %>%
+  write.csv(here("results", "EDFig2_data.csv"))
+
+ggsave("figures/fetalmeconiumgenera.jpeg", width = 10, height = 4, units = "in")
+
+
+timePalette
+
+```
+
+
+alpha diversity:
+```{r}
+measures <- c("Shannon", "Observed", "Simpson")
+
+shann <- estimate_richness(ps.merge, measures = c("Shannon", "Observed", "Simpson"))
+data <- cbind(sample_data(ps.merge), shann)
+data <- data %>% filter(SampleTime %in% c("neo", "inf", "neg")|(SampleTime == "fetal" & IlluminaRun =="LR343"))
+
+anova.obs <- lmer(Observed ~ SampleTime + (1|ParticipantID), data)
+anova(anova.obs)
+em <- emmeans(anova.obs, "SampleTime")
+pairs(em)
+
+anova.shann <- lmer(Shannon~SampleTime + (1|ParticipantID), data)
+anova(anova.shann)
+em <- emmeans(anova.shann, "SampleTime")
+pairs(em)
+
+anova.simp <- lmer(Simpson ~ SampleTime + (1|ParticipantID), data)
+anova(anova.simp)
+em <- emmeans(anova.simp, "SampleTime")
+pairs(em)
+
+data$SampleTime = factor(data$SampleTime, levels = c("neg", "fetal", "neo", "inf"))
+
+p <- data %>%
+  select("SampleTime", "culture", "IlluminaRun", "extraction", "Observed", "Shannon", "Simpson")%>%
+  pivot_longer(cols = all_of(measures),
+               names_to = "measure", 
+               values_to = "value", 
+               values_drop_na = TRUE)%>%
+  ggplot(aes(x=SampleTime, y=value, colour=SampleTime))+
+  geom_boxplot(outlier.size = 0)+
+  geom_point(position=position_jitterdodge(jitter.width = 0.5), size = 2,alpha = 0.7)+
+  facet_wrap(~measure, scales = "free_y") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5), 
+               axis.title.x = element_blank(),
+               strip.background = element_blank(), 
+               legend.justification = c(0,0),
+               legend.position = c(0,0.65), 
+               legend.background = element_blank(),
+               #legend.title = element_blank(),
+               panel.spacing = unit(1,"lines"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+          axis.line = element_line(colour = "black")) +
+  scale_color_manual(values = timePalette, guide = FALSE)
+    
+p
+
+p.alpha <- p
+
+source_data <- data %>%
+  select(ParticipantID, SampleTime, Observed, Shannon, Simpson)
+
+source_data %>%
+  write.csv(here("results", "alpha_data.csv"))
+
+```
+HERE ARE THE SECTIONS YOU NEED TO GET FIGURE 2C. THIS ONE GIVES YOU THE DISTANCE MATRIX. THE ERROR WILL GO AWAY WHEN YOU CHANGE THE FIG PART HERE. 
+Using glommed data for ordination b/c otherwise there are insufficient shared features and end up w/ horseshoe effect
+```{r}
+theme_set(theme_bw())
+ps.merge.norm2 <- subset_samples(ps.merge.norm, SampleTime %in% c("neo", "inf", "neg")|(SampleTime == "fetal" & IlluminaRun =="LR343"))
+ps.merge.glommed <- tax_glom(ps.merge.norm2, "Genus")
+ps.merge.glommed <- prune_taxa(taxa_sums(ps.merge.glommed)>0, ps.merge.glommed)
+
+
+dist <- phyloseq::distance(ps.merge.glommed, method = "bray") #calc dist matrix
+
+iMDS <- ordinate(ps.merge.glommed, "PCoA", distance = dist, weighted=TRUE)
+s <- plot_scree(iMDS) + theme(axis.text.x = element_text(size=0), axis.title = element_text(size=16), panel.grid = element_blank(), axis.text.y = element_text(size=14))
+s
+
+
+p <- NULL
+p <- plot_ordination(ps.merge.glommed, iMDS, color = "SampleTime", axes = c(1,2))
+p <- p + ggtitle(paste("PCoA (Bray)")) #title
+p <- p + geom_point(size = 3, alpha=0.6) + theme(axis.text = element_text(size=9), legend.text = element_text(size=10), axis.title = element_text(size=10), legend.title = element_blank(), plot.title = element_blank(), legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank(), strip.background = element_blank(), strip.text = element_text(size=12)) +
+  geom_point(data=negdata, aes(x=Axis.1, y=Axis.2), size = 3, alpha=0.6) # need to take this out, run it, then make negdata and run it again
+p <- p + scale_color_manual(values = timePalette) #+ scale_shape_manual(values = c(15,19,1))
+p$layers[1] = NULL
+p 
+p.beta <- p
+
+pdata <- p$data
+
+fig2b_data <- pdata %>%
+  select(Axis.1, Axis.2, SampleID, SampleTime)
+
+negdata <- pdata %>%
+  filter(SampleTime == "neg")
+
+fig2b_data %>%
+  write.csv(here("results", "bray2b_data.csv"))
+
+```
+
+THIS SECITON MAKES THE INITIAL PLOT FOR 2C
+Plot bray curtis distances between all samples by sample type
+```{r}
+ require("phyloseq")
+  require("dplyr")
+  require("reshape2")
+  require("ggplot2")
+
+dist.m <- melt(as.matrix(dist))
+
+dist.m <- dist.m %>%
+  filter(as.character(Var1) != as.character(Var2)) %>%
+  mutate_if(is.factor, as.character)
+
+sd <- sample_data(ps.merge.glommed)
+
+sd <- as.data.frame(sd)
+
+sd <- sd[,c("SampleID", "ParticipantID", "SampleTime")]
+
+colnames(sd) <- c("Var1", "ParticipantID_1", "SampleTime_1")
+dist.sd <- left_join(dist.m, sd, by = "Var1")
+
+colnames(sd) <- c("Var2", "ParticipantID_2", "SampleTime_2")
+dist.sd <- left_join(dist.sd, sd, by = "Var2")
+
+dist.sd$SampleTime_1 = factor(dist.sd$SampleTime_1, levels = c("neg", "fetal", "neo", "inf"))
+
+p1 <- ggplot(dist.sd, aes(x = SampleTime_2, y = value))+
+    geom_boxplot(aes(color = ifelse(SampleTime_1 == SampleTime_2, "black", "black"),
+                     fill = ifelse(SampleTime_1 == SampleTime_2, "grey", "white")),
+                 outlier.shape = NA) +
+    geom_jitter(alpha=0.15, width=0.2, shape = 20)+
+    scale_color_identity()+
+  scale_fill_identity()+
+  scale_x_discrete(limits = c("neg", "fetal", "neo", "inf"))+
+    facet_grid(.~SampleTime_1, switch = "both") +
+    theme(strip.background = element_blank(),
+          axis.title.x = element_blank(),
+          panel.grid= element_blank(),
+          panel.border = element_blank(),
+          axis.line = element_line(colour = "black")) +
+  labs(y = "Bray-Curtis Dissimilarity") 
+
+p1
+
+fig3a_n <- dist.sd %>%
+  group_by(SampleTime_1, SampleTime_2) %>%
+  count()
+
+
+
+dist.sd %>%
+  write.csv(here("results", "bray2c_data.csv"))
+```
+THIS SECTION DOES THE STATS FOR 2C
+Stats for bray-curtis distance 
+```{r}
+anova.obs <- lmer(value ~ SampleTime_1*SampleTime_2 + (1|ParticipantID_1:ParticipantID_2), dist.sd)
+anova(anova.obs)
+em <- emmeans(anova.obs, c("SampleTime_1", "SampleTime_2"))
+
+pairs <- as.data.frame(pairs(em))
+
+write.csv(pairs, "results/braycurtis_pairwise.csv")
+```
+
+THIS SECTION ADDS THE STATS TO THE PLOT FOR 2C
+Add stats labels to bray curtis plot
+```{r}
+order <- c("neg", "fetal", "neo", "inf")
+
+# I'm using a few function from dplyr to get the three grouping variables into a dataset in the same order as the plot.
+dist.sd2 <-  distinct(dist.sd, SampleTime_1, SampleTime_2)%>%
+  arrange(SampleTime_1,SampleTime_2)
+
+
+#Now add in the y location. You might want a different placement for each box but here I'm using the max of conc from the original dataset plus a little bit more.
+
+#dist.sd2$yloc = max(dist.sd$value) + 0.05
+
+dist.sd2$yloc <- c(0.6,1.05,0.6,1.05,0.6,1.05,0.6,1.05,1.05,1.05,1.05,1.05,1.05,1.05,1.05,1.05)
+
+#now the labels
+dist.sd2$label <-  c("a","c,d","a","b","a","c","a","b","b","d","b","b","c","e","c,d","d")
+
+#Now add the text to the plot via geom_text, using position_dodge to get things lined up appropriately.
+
+p <- p1 + 
+  geom_text(data = dist.sd2, aes(y=yloc, label = label))
+p
+
+
+#p$data$SampleTime_1 <- as.character(p$data$SampleTime_1)
+#p$data$SampleTime_1 <- factor(p$data$SampleTime_1, levels=order)
+p$data$SampleTime_2 <- as.character(p$data$SampleTime_2)
+p$data$SampleTime_2 <- factor(p$data$SampleTime_2, levels=order)
+p
+p.bray <- p
+
+
+```
+
+Combine plots into figure
+```{r}
+cowplot::plot_grid(p.alpha, p.beta, p.bray, ncol=1, align='h', 
+                   rel_heights = c(3, 2, 3), 
+                   labels = c("A", "B","C"),
+                   axis = "lr")
+
+
+ggsave("figures/alphabetabray.pdf", width = 8, height = 10, units = "in")
+```
+
+Make tree:
+The phangorn R package is then used to construct a phylogenetic tree. Here we first construct a neighbor-joining tree, and then fit a GTR+G+I (Generalized time-reversible with Gamma rate variation) maximum likelihood tree using the neighbor-joining tree as a starting point
+```{r}
+library(DECIPHER) #for multiple alignment
+library(phangorn)
+
+seqs <- taxa_names(ps.merge.glommed)
+names(seqs) <- seqs# This propagates to the tip labels of the tree
+alignment <- AlignSeqs(DNAStringSet(seqs), anchor=NA,verbose=FALSE)
+
+phangAlign <- phyDat(as(alignment, "matrix"), type="DNA")
+dm <- dist.ml(phangAlign)
+treeNJ <- NJ(dm) # Note, tip order != sequence order
+fit = pml(treeNJ, data=phangAlign)
+fitGTR <- update(fit, k=4, inv=0.2)
+fitGTR <- optim.pml(fitGTR, model="GTR", optInv=TRUE, optGamma=TRUE,
+        rearrangement = "stochastic", control = pml.control(trace = 0)) 
+detach("package:phangorn", unload=TRUE)
+
+tree1 = fitGTR$tree
+ape::write.tree(tree1, "data/genus_tree")
+```
+
+
+
+```{r}
+library("RColorBrewer")
+
+tree <- ape::read.tree("data/genus_tree")
+
+ps.merge.glom <- merge_phyloseq(ps.merge.glommed, phy_tree(tree))
+
+getPalette = colorRampPalette(viridis::magma(13))
+
+classList = unique(tax_table(ps.merge.glommed)[,"Class"])
+classPalette = getPalette(length(classList))
+names(classPalette) = classList
+classPalette["Alphaproteobacteria"] <- "#7592d1"
+classPalette["Clostridia"] <- "#90d9de"
+classPalette["Fusobacteriia"] <- "#f5931b"
+
+classPalette
+
+pie(rep(1, 13), col = classPalette)
+```
+
+```{r}
+library(ggtree)
+library(ggpubr)
+library(aplot)
+
+tree <- ggtree(ps.merge.glom, ladderize = TRUE)+
+    geom_tippoint(aes(subset = isTip, color=Class),na.rm=TRUE)+
+    scale_color_manual(values = classPalette)+
+  theme(legend.position = "none")+
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+tree + geom_text2(aes(subset=!isTip, label=node), hjust=-.3, size=2)
+
+
+
+leg <- ggtree(ps.merge.glom, ladderize = TRUE)+
+    geom_tippoint(aes(subset = isTip, color=Class),na.rm=TRUE)+
+    scale_color_manual(values = classPalette)+
+  scale_x_continuous(expand = c(0,0))
+
+mylegend<-get_legend(leg)
+
+gd <- tree$data
+
+sample_data <- psmelt(ps.merge.glom)
+
+tt <- sample_data %>% left_join(select(gd,label,x,y), by=c("OTU"="label")) %>%
+   mutate(sample2=factor(SampleID,levels=unique(SampleID)),
+col=as.numeric(sample2),x.col=scales::rescale(col,to=c(1.3,2)))
+
+tt <- tt %>% mutate(col = group_indices_(tt, .dots=c('SampleID')))
+
+tt$SampleTime<-factor(tt$SampleTime,levels=c("neg", "fetal","neo", "inf"))
+
+Palette_actino <- c("#e7298a","#984ea3","#377eb8", "green")
+
+
+p2 <- tt%>% ggplot(aes(x=SampleID, y= y)) + 
+    geom_tile(aes(fill="none", alpha=Abundance), colour="#E6E6E6")+
+  geom_point(aes(colour=Class, alpha=Abundance))+
+  scale_alpha(range=c(1,1), limits=c(0.00001,1), na.value = 0)+
+    theme_tree2()+
+  facet_grid(.~SampleTime, scales = "free", space="free_x")+
+  scale_colour_manual(values = classPalette)+
+  scale_fill_manual(values=classPalette)+
+  theme(legend.position = "none", 
+        axis.text.x = element_blank(), 
+        axis.line.x = element_blank(), 
+        axis.ticks.x = element_blank(),
+        strip.text = element_blank(),
+        panel.border=element_rect(colour="black",fill=NA,size=0.5),
+        panel.spacing = unit(1,"mm"),
+        plot.margin = unit(c(0, 0, 0, 0), "cm"))
+p2
+
+p2 <- p2 + ylim2(tree)
+
+plot <- cowplot::plot_grid(tree, p2, ncol=2, align='v', 
+                   rel_widths = c(1.5,1), 
+                   axis = "bt")
+plot
+
+plot <- cowplot::plot_grid(plot, mylegend, rel_widths = c(3, 1))
+
+plot + theme(plot.margin = unit(c(0.5,0,0,0), "in")) #top, right, bottom, left
+
+ggsave("figures/treebysampletime.pdf", width = 8, height = 10.5, units = "in")
+```
+
